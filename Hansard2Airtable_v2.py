@@ -134,6 +134,10 @@ def process_members(members_string, politicians_map):
     members = [m.strip() for m in members_string.split('|')]
     members = [m for m in members if m and not m.isspace()]  # Remove empty or whitespace-only entries
     
+    if not members:  # If after cleaning we have no valid members
+        stats['empty_members'] += 1
+        return []
+    
     # Process each name and find matching record IDs
     member_ids = []
     unmatched_members = []
@@ -164,9 +168,6 @@ def process_members(members_string, politicians_map):
             unmatched_members.append(member)
             stats['unmatched_members'].add(member)
             print(f"Added to unmatched members: {member}")  # Debug output
-            
-    if not member_ids and members:  # Only count as empty if there were members to process
-        stats['empty_members'] += 1
             
     if unmatched_members:
         print(f"\nWarning: Could not find matching records for these members:")
@@ -431,9 +432,8 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return None
         
     if not member_ids:
-        stats['empty_members'] += 1
         print(f"\nSkipping record from {row['Date']} - Empty or Invalid Members")
-        return None
+        return None  # Note: empty_members is now handled exclusively by process_members
         
     # Format House field
     formatted_house = format_house(row['House'])
@@ -476,7 +476,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return None
 
 # Configuration
-ROWS_TO_PROCESS = 100  # Number of rows to scrape from Hansard
+ROWS_TO_PROCESS = 20  # Number of rows to scrape from Hansard
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 # URL of the Hansard webpage to scrape
@@ -551,7 +551,9 @@ else:
                     proceedings.append(None)
                 subjects.append(subject_text)
                 houses.append(cols[2].text.strip())
-                members.append(cols[3].text.strip())
+                member_text = cols[3].text.strip()
+                print(f"\nDebug - Member text: '{member_text}'")  # Debug output
+                members.append(member_text)
                 pdf_link = cols[0].find('a', href=True) or cols[4].find('a', href=True)
                 if pdf_link:
                     full_pdf_link = "https://www.parliament.wa.gov.au" + pdf_link['href']
