@@ -190,7 +190,7 @@ def add_records_to_airtable(records):
         print("\nFirst record structure:")
         print(json.dumps(records[0], indent=2))
 
-    BATCH_SIZE = 1  # Reduced to 1 for testing
+    BATCH_SIZE = 10  # Number of records to send to Airtable at once
     successful_uploads = 0
     failed_uploads = 0
 
@@ -327,6 +327,10 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return record
     return None
 
+# Configuration
+ROWS_TO_PROCESS = 100  # Number of rows to scrape from Hansard
+BATCH_SIZE = 10  # Number of records to send to Airtable at once
+
 # URL of the Hansard webpage to scrape
 target_url = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Member%5D=((%22Walker,%20Hon%20Dr%20Brian%22%20or%20%22Hon%20Dr%20Brian%20Walker%22%20or%20%22Hon%20Dr%20Brian%20Walker%22))))%20and%20((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=Walker;%20Hon%20Dr%20Brian&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=100&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
 
@@ -376,10 +380,10 @@ else:
         print("No suitable table found on the page. Please check the HTML structure.")
     else:
         rows = target_table.find_all('tr')
-        print(f"Processing {len(rows)-1} rows of data...")
+        print(f"\nProcessing {ROWS_TO_PROCESS} rows from Hansard...")
         
-        for idx, row in enumerate(rows[1:51], 1):  # How many rows?
-            print(f"\nProcessing row {idx} of 50...")
+        for idx, row in enumerate(rows[1:ROWS_TO_PROCESS + 1], 1):  # Process specified number of rows
+            print(f"\nProcessing row {idx} of {ROWS_TO_PROCESS}...")
             cols = row.find_all('td')
             if len(cols) >= 5:
                 date_page = cols[0].text.strip()
