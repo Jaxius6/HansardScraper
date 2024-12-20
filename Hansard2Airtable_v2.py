@@ -444,7 +444,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
 
     new_fingerprint = (
         row['Date'],
-        row['Subject'],
+        format_subject(row['Subject']),
         row['Page'],
         formatted_house,
         tuple(member_ids),
@@ -459,7 +459,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
             'fields': {
                 'Date': row['Date'],
                 'Page': row['Page'],
-                'Subject': row['Subject'],
+                'Subject': format_subject(row['Subject']),
                 'Proceeding': proceedings,
                 'House': formatted_house,
                 'Members': member_ids,
@@ -694,10 +694,6 @@ total_skipped = (stats['duplicates'] + stats['empty_proceedings'] +
                 stats['empty_members'] + stats['invalid_house'] + 
                 stats['skipped_other'])
 
-print(f"\nTotal Records Summary:")
-print(f"• Input Records: {stats['total_scraped']}")
-print(f"• Successfully Processed: {successful}")
-print(f"• Total Skipped: {total_skipped}")
 if stats['total_scraped'] != (successful + total_skipped):
     print(f"• Records Mismatch: {stats['total_scraped'] - (successful + total_skipped)} (investigating...)")
 
