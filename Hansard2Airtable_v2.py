@@ -141,6 +141,7 @@ def process_members(members_string, politicians_map):
     for member in members:
         # Skip certain roles that aren't actual members
         if member.upper() in ['ACTING SPEAKER', 'SPEAKER', 'PRESIDENT', 'DEPUTY SPEAKER']:
+            stats['invalid_members'].add(member)
             continue
             
         # Normalize the name
@@ -164,8 +165,8 @@ def process_members(members_string, politicians_map):
             stats['unmatched_members'].add(member)
             print(f"Added to unmatched members: {member}")  # Debug output
             
-    if not member_ids:  # If no valid members were found
-        stats['invalid_members'].update(members)  # Add all members as invalid
+    if not member_ids and members:  # Only count as empty if there were members to process
+        stats['empty_members'] += 1
             
     if unmatched_members:
         print(f"\nWarning: Could not find matching records for these members:")
@@ -437,24 +438,13 @@ def create_record(row, member_ids, transcript_fields, existing_records):
     # Format House field
     formatted_house = format_house(row['House'])
     if not formatted_house:
+        stats['invalid_house'] += 1  # Track invalid house values
         print(f"\nSkipping record from {row['Date']} - Invalid House value: {row['House']}")
         return None
-        
-    # Format Subject field and clean transcript text
-    formatted_subject = format_subject(row['Subject'])
-    cleaned_transcript = clean_transcript_text(row['Transcript'])
-    
-    # Clean and format transcript fields
-    cleaned_transcript_fields = {}
-    for key, value in transcript_fields.items():
-        if isinstance(value, str):
-            cleaned_transcript_fields[key] = clean_transcript_text(value)
-        else:
-            cleaned_transcript_fields[key] = value
-    
+
     new_fingerprint = (
         row['Date'],
-        formatted_subject,
+        row['Subject'],
         row['Page'],
         formatted_house,
         tuple(member_ids),
@@ -463,13 +453,13 @@ def create_record(row, member_ids, transcript_fields, existing_records):
     
     if new_fingerprint not in existing_records:
         filesize = float(round(row['Filesize'], 2)) if pd.notnull(row['Filesize']) else None
-        word_count = len(cleaned_transcript.split()) if cleaned_transcript else 0
+        word_count = len(transcript_fields['Transcript'].split()) if transcript_fields['Transcript'] else 0
         
         record = {
             'fields': {
                 'Date': row['Date'],
                 'Page': row['Page'],
-                'Subject': formatted_subject,
+                'Subject': row['Subject'],
                 'Proceeding': proceedings,
                 'House': formatted_house,
                 'Members': member_ids,
@@ -477,7 +467,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
                 'PDF_URL': row['PDF'] if row['PDF'] else None,
                 'Word_Count': word_count,
                 'Filesize': filesize,
-                **cleaned_transcript_fields
+                **transcript_fields
             }
         }
         return record
@@ -624,8 +614,10 @@ stats = {
     'empty_proceedings': 0,
     'empty_members': 0,
     'duplicates': 0,
+    'invalid_house': 0,    # New: Track invalid house values
     'unmatched_members': set(),  # Using set to avoid duplicates
-    'invalid_members': set()     # Track members that were invalid
+    'invalid_members': set(),     # Track members that were invalid
+    'skipped_other': 0     # New: Track any other skipped records
 }
 
 # Initialize counters
@@ -689,15 +681,27 @@ print(f"* Total Records Scraped: {stats['total_scraped']}")
 print(f"✓ Successfully uploaded: {successful} records")
 print(f"✗ Failed to upload: {failed} records")
 
-print("\nSkipped Records:")
+print("\nSkipped Records Breakdown:")
 print(f"• Duplicates: {stats['duplicates']}")
 print(f"• Empty Proceedings: {stats['empty_proceedings']}")
 print(f"• Empty Members: {stats['empty_members']}")
-print(f"• Invalid Members: {len(stats['invalid_members'])}")
+print(f"• Invalid House Values: {stats['invalid_house']}")
+print(f"• Other Skipped Records: {stats['skipped_other']}")
+
+total_skipped = (stats['duplicates'] + stats['empty_proceedings'] + 
+                stats['empty_members'] + stats['invalid_house'] + 
+                stats['skipped_other'])
+
+print(f"\nTotal Records Summary:")
+print(f"• Input Records: {stats['total_scraped']}")
+print(f"• Successfully Processed: {successful}")
+print(f"• Total Skipped: {total_skipped}")
+if stats['total_scraped'] != (successful + total_skipped):
+    print(f"• Records Mismatch: {stats['total_scraped'] - (successful + total_skipped)} (investigating...)")
 
 if stats['invalid_members']:
-    print("\nInvalid Members List:")
-    for member in sorted(m for m in stats['invalid_members'] if m and not m.isspace()):
+    print("\nInvalid Members List (roles excluded):")
+    for member in sorted(stats['invalid_members']):
         print(f"  - {member}")
 
 print(f"\nUnmatched Members (not found in database): {len(stats['unmatched_members'])}")
