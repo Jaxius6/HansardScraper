@@ -23,40 +23,65 @@ HEADERS = {
 
 def normalize_name(name):
     """Normalize a name for better matching"""
-    # Remove extra spaces and convert to lowercase
-    name = ' '.join(name.split()).lower()
+    if not name:
+        return ""
     
-    # Handle common prefixes consistently
-    prefixes = ['hon', 'dr', 'mr', 'mrs', 'ms', 'prof']
+    # Remove any non-printable characters and normalize spaces
+    name = ''.join(char for char in name if char.isprintable())
+    name = ' '.join(name.split()).strip()
     
-    # Split name into parts
-    parts = name.split()
+    # Handle "Lastname, Title Firstname" format
+    if ',' in name:
+        parts = name.split(',', 1)
+        lastname = parts[0].strip()
+        rest = parts[1].strip()
+        
+        # Split rest into title and firstname
+        rest_parts = rest.split(None, 1)
+        if len(rest_parts) > 1 and rest_parts[0].lower() in ['mr', 'ms', 'mrs', 'hon', 'dr']:
+            title = rest_parts[0]
+            firstname = rest_parts[1]
+            name = f"{title} {firstname} {lastname}"
+        else:
+            name = f"{rest} {lastname}"
     
-    # Remove prefixes for matching
-    if parts and parts[0] in prefixes:
-        parts.pop(0)
+    return name.strip()
+
+def normalize_name_for_matching(name):
+    """Normalize a name for fuzzy matching comparison"""
+    if not name:
+        return ""
     
-    # Handle 'de', 'van', 'von' etc. consistently
-    for i in range(len(parts)-1):
-        if parts[i] in ['de', 'van', 'von']:
-            parts[i] = parts[i].lower()
+    # Remove any non-printable characters and normalize spaces
+    name = ''.join(char for char in name if char.isprintable())
+    name = ' '.join(name.split()).strip()
     
-    return ' '.join(parts)
+    # Remove common titles for matching
+    titles = ['hon', 'dr', 'mr', 'mrs', 'ms', 'prof']
+    words = name.lower().split()
+    if words and words[0] in titles:
+        words.pop(0)
+    
+    return ' '.join(words)
 
 def find_best_match(name, politicians_map):
     """Find the best matching politician using fuzzy matching"""
-    normalized_name = normalize_name(name)
-    normalized_politicians = {normalize_name(k): k for k in politicians_map.keys()}
+    if not name:
+        return None
+        
+    # First normalize both strings for comparison
+    normalized_name = normalize_name_for_matching(name)
+    normalized_politicians = {normalize_name_for_matching(k): k for k in politicians_map.keys()}
     
     # Debug info
     print(f"\nTrying to match: '{name}'")
     print(f"Normalized to: '{normalized_name}'")
     
-    # First try exact match with normalized names
-    if normalized_name in normalized_politicians:
-        original_name = normalized_politicians[normalized_name]
-        print(f"Exact match found: '{original_name}'")
-        return politicians_map[original_name]
+    # Try exact match with normalized names
+    for norm_pol, original_pol in normalized_politicians.items():
+        if normalized_name == norm_pol:
+            print(f"Found exact match: '{original_pol}'")
+            return politicians_map[original_pol]
     
     # Try fuzzy matching
     matches = get_close_matches(normalized_name, normalized_politicians.keys(), n=1, cutoff=0.85)
@@ -98,9 +123,13 @@ def process_members(members_string, politicians_map):
     Convert pipe-separated member string into array of Airtable record IDs
     for linked records
     """
+    global stats
+    
     if not members_string or members_string.isspace():
+        stats['empty_members'] += 1
+        stats['invalid_members'].add(members_string)  # Add the empty/invalid string
         return []
-        
+    
     # Split by pipe and strip whitespace
     members = [m.strip() for m in members_string.split('|')]
     members = [m for m in members if m and not m.isspace()]  # Remove empty or whitespace-only entries
@@ -110,26 +139,33 @@ def process_members(members_string, politicians_map):
     unmatched_members = []
     
     for member in members:
-        # Remove extra spaces
-        member = ' '.join(member.split())
-        
-        # Handle format "Lastname, Hon Firstname"
-        if ',' in member:
-            parts = member.split(',', 1)
-            lastname = parts[0].strip()
-            rest = parts[1].strip()
-            # Reconstruct as "Hon Firstname Lastname"
-            member = f"{rest} {lastname}"
-        
-        # First try exact match, then fuzzy match
-        member_id = politicians_map.get(member)
-        if not member_id:
-            member_id = find_best_match(member, politicians_map)
+        # Skip certain roles that aren't actual members
+        if member.upper() in ['ACTING SPEAKER', 'SPEAKER', 'PRESIDENT', 'DEPUTY SPEAKER']:
+            continue
             
+        # Normalize the name
+        normalized_name = normalize_name(member)
+        print(f"\nProcessing member: '{member}'")
+        print(f"Normalized to: '{normalized_name}'")
+        
+        # First try exact match with normalized name
+        member_id = politicians_map.get(normalized_name)
+        if member_id:
+            print(f"Found exact match: '{normalized_name}'")
+            member_ids.append(member_id)
+            continue
+            
+        # Try fuzzy match
+        member_id = find_best_match(normalized_name, politicians_map)
         if member_id:
             member_ids.append(member_id)
         else:
             unmatched_members.append(member)
+            stats['unmatched_members'].add(member)
+            print(f"Added to unmatched members: {member}")  # Debug output
+            
+    if not member_ids:  # If no valid members were found
+        stats['invalid_members'].update(members)  # Add all members as invalid
             
     if unmatched_members:
         print(f"\nWarning: Could not find matching records for these members:")
@@ -287,19 +323,19 @@ def process_proceedings(proceedings_string):
 
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
-    global skipped_records
+    global stats
     
     # Process proceedings into array
     proceedings = process_proceedings(row['Proceeding'])
     
     # Skip if Proceeding or Members are empty
     if not proceedings:
-        skipped_records['empty_fields'] += 1
+        stats['empty_proceedings'] += 1
         print(f"\nSkipping record from {row['Date']} - Empty Proceeding")
         return None
         
-    if not member_ids:  # Check the processed member_ids instead of raw Members field
-        skipped_records['empty_fields'] += 1
+    if not member_ids:
+        stats['empty_members'] += 1
         print(f"\nSkipping record from {row['Date']} - Empty or Invalid Members")
         return None
         
@@ -333,7 +369,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         }
         return record
     else:
-        skipped_records['duplicates'] += 1
+        stats['duplicates'] += 1
         return None
 
 # Configuration
@@ -355,7 +391,7 @@ print("""
     |LI LI LI LI||LI||LI||LI||LI LI LI LI|
     |.. .. .. ..||..||..||..||.. .. .. ..|
     |LI LI LI LI||LI||LI||LI||LI LI LI LI|
- ,,;;,;;;,;;;,;;;,;;;,;;;,;;;,;;,;;;,;;;,;;,,
+ ,,;;,;;;,;;;,;;;,;;;,;;;,;;;,;;,;;;,;;;,;;,;
 ;;;;;;;;;  HANSARD  SCRAPER  ACTIVATED  ;;;;;;
 ----------------------------------------------
 
@@ -469,6 +505,16 @@ print("\nFetching required data...")
 politicians_map = fetch_politicians()
 existing_records = fetch_existing_records()
 
+# Initialize statistics
+stats = {
+    'total_scraped': 0,
+    'empty_proceedings': 0,
+    'empty_members': 0,
+    'duplicates': 0,
+    'unmatched_members': set(),  # Using set to avoid duplicates
+    'invalid_members': set()     # Track members that were invalid
+}
+
 # Initialize counters
 skipped_records = {'empty_fields': 0, 'duplicates': 0}
 
@@ -477,6 +523,8 @@ new_records = []
 split_transcripts = []
 
 for _, row in hansard_df.iterrows():
+    stats['total_scraped'] += 1
+    
     # Process members into record IDs first
     member_ids = process_members(row['Members'], politicians_map)
     
@@ -512,15 +560,35 @@ if split_transcripts:
         if t['Was_Truncated']:
             print("  Note: Transcript was truncated")
 
-# Modify the main code to explicitly call and handle the upload results
+# Initialize upload results
+successful = 0
+failed = 0
+
 print("\nPreparing to upload new records...")
 if new_records:
     print(f"Found {len(new_records)} new records to upload")
     successful, failed = upload_records_to_airtable(new_records)
-    print(f"\nFinal Upload Results:")
-    print(f"✓ Successfully added {successful} records to Airtable")
-    print(f"✗ Failed to add {failed} records")
 else:
     print("No new records to upload")
 
-print("Finished Scraping")
+print("\n=== FINAL RESULTS ===")
+print(f"* Total Records Scraped: {stats['total_scraped']}")
+print(f"✓ Successfully uploaded: {successful} records")
+print(f"✗ Failed to upload: {failed} records")
+
+print("\nSkipped Records:")
+print(f"• Duplicates: {stats['duplicates']}")
+print(f"• Empty Proceedings: {stats['empty_proceedings']}")
+print(f"• Empty/Invalid Members: {stats['empty_members']}")
+
+if stats['invalid_members']:
+    print("\nInvalid Members:")
+    for member in sorted(m for m in stats['invalid_members'] if m and not m.isspace()):
+        print(f"  - {member}")
+
+if stats['unmatched_members']:
+    print("\nUnmatched Members (not found in database):")
+    for member in sorted(stats['unmatched_members']):
+        print(f"  - {member}")
+
+print("\nFinished Scraping")
