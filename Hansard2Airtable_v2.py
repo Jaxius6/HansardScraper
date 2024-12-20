@@ -296,6 +296,14 @@ def split_transcript(transcript):
 
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
+    global skipped_records
+    
+    # Skip if Proceeding or Members are empty
+    if not row['Proceeding'] or not row['Members']:
+        skipped_records['empty_fields'] += 1
+        print(f"\nSkipping record from {row['Date']} - Empty {'Proceeding' if not row['Proceeding'] else 'Members'}")
+        return None
+        
     new_fingerprint = (
         row['Date'],
         row['Subject'],
@@ -325,14 +333,16 @@ def create_record(row, member_ids, transcript_fields, existing_records):
             }
         }
         return record
-    return None
+    else:
+        skipped_records['duplicates'] += 1
+        return None
 
 # Configuration
 ROWS_TO_PROCESS = 100  # Number of rows to scrape from Hansard
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 # URL of the Hansard webpage to scrape
-target_url = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Member%5D=((%22Walker,%20Hon%20Dr%20Brian%22%20or%20%22Hon%20Dr%20Brian%20Walker%22%20or%20%22Hon%20Dr%20Brian%20Walker%22))))%20and%20((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=Walker;%20Hon%20Dr%20Brian&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=100&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
+target_url = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=100&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
 
 # Fetch the web page
 
@@ -460,6 +470,9 @@ print("\nFetching required data...")
 politicians_map = fetch_politicians()
 existing_records = fetch_existing_records()
 
+# Initialize counters
+skipped_records = {'empty_fields': 0, 'duplicates': 0}
+
 # Prepare new records to be added
 new_records = []
 split_transcripts = []
@@ -487,6 +500,8 @@ for _, row in hansard_df.iterrows():
 # Print detailed duplication and truncation information
 print("\nDuplication Check Summary:")
 print(f"Total records processed: {len(hansard_df)}")
+print(f"Records skipped due to empty fields: {skipped_records['empty_fields']}")
+print(f"Duplicate records skipped: {skipped_records['duplicates']}")
 print(f"New records to add: {len(new_records)}")
 
 if split_transcripts:
