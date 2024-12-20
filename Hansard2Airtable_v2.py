@@ -368,6 +368,54 @@ def format_subject(subject):
     
     return ' '.join(words)
 
+def clean_transcript_text(text):
+    """Clean and format transcript text to fix common issues"""
+    if not text:
+        return text
+        
+    # Fix split words and spacing issues
+    text = text.replace(' -', '-')  # Remove space before hyphen
+    text = text.replace('- ', '-')  # Remove space after hyphen
+    text = text.replace(' ,', ',')  # Fix space before comma
+    text = text.replace(' .', '.')  # Fix space before period
+    
+    # Fix common split word patterns
+    common_splits = {
+        'ye sterday': 'yesterday',
+        'a nother': 'another',
+        'be cause': 'because',
+        're member': 'remember',
+        'to day': 'today',
+        'yester day': 'yesterday',
+        'every one': 'everyone',
+        'some one': 'someone',
+        'any one': 'anyone',
+        'every thing': 'everything',
+        'some thing': 'something',
+        'any thing': 'anything'
+    }
+    
+    for split_word, fixed_word in common_splits.items():
+        text = text.replace(split_word, fixed_word)
+    
+    # Fix em-dashes and other special characters
+    text = text.replace('--', '—')  # Convert double hyphen to em-dash
+    text = text.replace(' - ', ' — ')  # Convert spaced hyphen to em-dash
+    text = text.replace('...', '…')  # Convert triple dots to ellipsis
+    text = text.replace('"', '"')  # Convert straight quotes to curly quotes
+    text = text.replace('"', '"')  # Convert straight quotes to curly quotes
+    text = text.replace("'", "'")  # Convert straight single quotes to curly
+    text = text.replace("'", "'")  # Convert straight single quotes to curly
+    
+    # Fix multiple spaces
+    text = ' '.join(text.split())
+    
+    # Fix line breaks
+    text = text.replace('\r\n', '\n')  # Normalize line endings
+    text = text.replace('\n\n\n', '\n\n')  # Remove excessive line breaks
+    
+    return text
+
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
     global stats
@@ -392,8 +440,17 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         print(f"\nSkipping record from {row['Date']} - Invalid House value: {row['House']}")
         return None
         
-    # Format Subject field
+    # Format Subject field and clean transcript text
     formatted_subject = format_subject(row['Subject'])
+    cleaned_transcript = clean_transcript_text(row['Transcript'])
+    
+    # Clean and format transcript fields
+    cleaned_transcript_fields = {}
+    for key, value in transcript_fields.items():
+        if isinstance(value, str):
+            cleaned_transcript_fields[key] = clean_transcript_text(value)
+        else:
+            cleaned_transcript_fields[key] = value
     
     new_fingerprint = (
         row['Date'],
@@ -406,7 +463,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
     
     if new_fingerprint not in existing_records:
         filesize = float(round(row['Filesize'], 2)) if pd.notnull(row['Filesize']) else None
-        word_count = len(row['Transcript'].split()) if row['Transcript'] else 0
+        word_count = len(cleaned_transcript.split()) if cleaned_transcript else 0
         
         record = {
             'fields': {
@@ -420,7 +477,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
                 'PDF_URL': row['PDF'] if row['PDF'] else None,
                 'Word_Count': word_count,
                 'Filesize': filesize,
-                **transcript_fields
+                **cleaned_transcript_fields
             }
         }
         return record
