@@ -271,7 +271,7 @@ def split_transcript(transcript):
     if total_length <= AIRTABLE_TEXT_LIMIT:
         return {"Transcript": transcript}, False, False
         
-    # Calculate safe limit for each field (leaving room for continuation markers)
+    # Calculate safe limit for each field
     safe_limit = AIRTABLE_TEXT_LIMIT - 100
     transcripts = {}
     remaining_text = transcript
@@ -293,11 +293,8 @@ def split_transcript(transcript):
         last_newline = text_chunk.rfind('\n')
         break_point = max(last_period, last_newline) if max(last_period, last_newline) > 0 else safe_limit
         
-        # Add continuation marker
+        # Add the chunk without continuation marker
         current_part = remaining_text[:break_point + 1]
-        if i < MAX_TRANSCRIPT_FIELDS - 1:
-            current_part += "\n[Continued in next part...]"
-        
         transcripts[field_name] = current_part
         remaining_text = remaining_text[break_point + 1:]
         
@@ -331,6 +328,9 @@ for _, row in hansard_df.iterrows():
     if new_fingerprint not in existing_records:
         filesize = float(round(row['Filesize'], 2)) if pd.notnull(row['Filesize']) else None
         
+        # Calculate word count
+        word_count = len(row['Transcript'].split()) if row['Transcript'] else 0
+        
         # Split transcript across fields if necessary
         transcript_fields, was_split, was_truncated = split_transcript(row['Transcript'])
         if was_split or was_truncated:
@@ -351,6 +351,8 @@ for _, row in hansard_df.iterrows():
                 'House': row['House'],
                 'Members': row['Members'],
                 'PDF': [{'url': row['PDF']}] if row['PDF'] else None,
+                'PDF_URL': row['PDF'] if row['PDF'] else None,  # Add PDF_URL field
+                'Word_Count': word_count,  # Add Word_Count field
                 'Filesize': filesize,
                 **transcript_fields  # This will add all transcript fields
             }
