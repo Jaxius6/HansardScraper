@@ -321,6 +321,53 @@ def process_proceedings(proceedings_string):
     seen = set()
     return [p for p in proceedings if p and not (p in seen or seen.add(p))]
 
+def format_house(house):
+    """Validate and format House field"""
+    if not house:
+        return None
+        
+    # Normalize the input
+    house = house.strip().upper()
+    
+    # Valid house values
+    VALID_HOUSES = {
+        'ASSEMBLY': 'Assembly',
+        'COUNCIL': 'Council'
+    }
+    
+    # Return properly formatted house or None if invalid
+    return VALID_HOUSES.get(house)
+
+def format_subject(subject):
+    """Format subject in Title Case, handling special cases"""
+    if not subject:
+        return None
+        
+    # List of words that should remain uppercase
+    uppercase_words = {'wa', 'mp', 'mlc', 'cbd', 'gst', 'abc', 'bom'}
+    
+    # List of words that should remain lowercase
+    lowercase_words = {'a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'if', 'in', 
+                      'of', 'on', 'or', 'the', 'to', 'up', 'yet'}
+    
+    # Split the subject into words
+    words = subject.strip().lower().split()
+    
+    # Process each word
+    for i, word in enumerate(words):
+        # Always capitalize first and last word
+        if i == 0 or i == len(words) - 1:
+            words[i] = word.capitalize()
+        # Check for special cases
+        elif word in uppercase_words:
+            words[i] = word.upper()
+        elif word in lowercase_words:
+            words[i] = word.lower()
+        else:
+            words[i] = word.capitalize()
+    
+    return ' '.join(words)
+
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
     global stats
@@ -339,11 +386,20 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         print(f"\nSkipping record from {row['Date']} - Empty or Invalid Members")
         return None
         
+    # Format House field
+    formatted_house = format_house(row['House'])
+    if not formatted_house:
+        print(f"\nSkipping record from {row['Date']} - Invalid House value: {row['House']}")
+        return None
+        
+    # Format Subject field
+    formatted_subject = format_subject(row['Subject'])
+    
     new_fingerprint = (
         row['Date'],
-        row['Subject'],
+        formatted_subject,
         row['Page'],
-        row['House'],
+        formatted_house,
         tuple(member_ids),
         tuple(proceedings)
     )
@@ -356,9 +412,9 @@ def create_record(row, member_ids, transcript_fields, existing_records):
             'fields': {
                 'Date': row['Date'],
                 'Page': row['Page'],
-                'Subject': row['Subject'],
+                'Subject': formatted_subject,
                 'Proceeding': proceedings,
-                'House': row['House'],
+                'House': formatted_house,
                 'Members': member_ids,
                 'PDF': [{'url': row['PDF']}] if row['PDF'] else None,
                 'PDF_URL': row['PDF'] if row['PDF'] else None,
@@ -373,7 +429,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return None
 
 # Configuration
-ROWS_TO_PROCESS = 50  # Number of rows to scrape from Hansard
+ROWS_TO_PROCESS = 100  # Number of rows to scrape from Hansard
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 # URL of the Hansard webpage to scrape
@@ -571,7 +627,7 @@ if new_records:
 else:
     print("No new records to upload")
 
-print("\n=== FINAL RESULTS ===")
+print("\n============ FINAL RESULTS ============")
 print(f"* Total Records Scraped: {stats['total_scraped']}")
 print(f"✓ Successfully uploaded: {successful} records")
 print(f"✗ Failed to upload: {failed} records")
@@ -579,16 +635,31 @@ print(f"✗ Failed to upload: {failed} records")
 print("\nSkipped Records:")
 print(f"• Duplicates: {stats['duplicates']}")
 print(f"• Empty Proceedings: {stats['empty_proceedings']}")
-print(f"• Empty/Invalid Members: {stats['empty_members']}")
+print(f"• Empty Members: {stats['empty_members']}")
+print(f"• Invalid Members: {len(stats['invalid_members'])}")
 
 if stats['invalid_members']:
-    print("\nInvalid Members:")
+    print("\nInvalid Members List:")
     for member in sorted(m for m in stats['invalid_members'] if m and not m.isspace()):
         print(f"  - {member}")
 
+print(f"\nUnmatched Members (not found in database): {len(stats['unmatched_members'])}")
 if stats['unmatched_members']:
-    print("\nUnmatched Members (not found in database):")
+    print("\nUnmatched Members List:")
     for member in sorted(stats['unmatched_members']):
         print(f"  - {member}")
 
-print("\nFinished Scraping")
+print("""
+                 _ _.-'`-._ _
+                ;.'________'.;
+     _________n.[____________].n_________
+    |""_""_""_""||==||==||==||""_""_""_""]
+    |.. .. .. ..||..||..||..||.. .. .. ..|
+    |LI LI LI LI||LI||LI||LI||LI LI LI LI|
+    |.. .. .. ..||..||..||..||.. .. .. ..|
+    |LI LI LI LI||LI||LI||LI||LI LI LI LI|
+ ,,;;,;;;,;;;,;;;,;;;,;;;,;;;,;;,;;;,;;;,;;,;
+;;;;;;;;;  HANSARD  SCRAPE  COMPLETED  ;;;;;;
+----------------------------------------------
+
+""")
