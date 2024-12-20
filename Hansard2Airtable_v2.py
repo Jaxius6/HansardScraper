@@ -168,7 +168,7 @@ def fetch_existing_records():
                 fields.get('Page'),
                 fields.get('House'),
                 members,  # Now using the tuple version
-                fields.get('Proceeding')
+                tuple(fields.get('Proceeding', []))  # Use tuple for proceedings
             )
             existing_records.add(fingerprint)
             
@@ -294,14 +294,29 @@ def split_transcript(transcript):
             
     return transcripts, len(transcripts) > 1, was_truncated
 
+def process_proceedings(proceedings_string):
+    """Convert proceedings string into array of individual proceedings"""
+    if not proceedings_string:
+        return []
+        
+    # Split by comma and clean up each proceeding
+    proceedings = [p.strip() for p in proceedings_string.split(',')]
+    
+    # Remove empty strings and duplicates while preserving order
+    seen = set()
+    return [p for p in proceedings if p and not (p in seen or seen.add(p))]
+
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
     global skipped_records
     
+    # Process proceedings into array
+    proceedings = process_proceedings(row['Proceeding'])
+    
     # Skip if Proceeding or Members are empty
-    if not row['Proceeding'] or not row['Members']:
+    if not proceedings or not row['Members']:
         skipped_records['empty_fields'] += 1
-        print(f"\nSkipping record from {row['Date']} - Empty {'Proceeding' if not row['Proceeding'] else 'Members'}")
+        print(f"\nSkipping record from {row['Date']} - Empty {'Proceeding' if not proceedings else 'Members'}")
         return None
         
     new_fingerprint = (
@@ -310,7 +325,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         row['Page'],
         row['House'],
         tuple(member_ids),
-        row['Proceeding']
+        tuple(proceedings)  # Use proceedings tuple in fingerprint
     )
     
     if new_fingerprint not in existing_records:
@@ -322,9 +337,9 @@ def create_record(row, member_ids, transcript_fields, existing_records):
                 'Date': row['Date'],
                 'Page': row['Page'],
                 'Subject': row['Subject'],
-                'Proceeding': row['Proceeding'],
+                'Proceeding': proceedings,  # Send as array for Multiple Select
                 'House': row['House'],
-                'Members': member_ids,  # Just the IDs - Airtable will handle the linking
+                'Members': member_ids,
                 'PDF': [{'url': row['PDF']}] if row['PDF'] else None,
                 'PDF_URL': row['PDF'] if row['PDF'] else None,
                 'Word_Count': word_count,
@@ -338,11 +353,11 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return None
 
 # Configuration
-ROWS_TO_PROCESS = 100  # Number of rows to scrape from Hansard
+ROWS_TO_PROCESS = 200  # Number of rows to scrape from Hansard
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 # URL of the Hansard webpage to scrape
-target_url = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=100&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
+target_url = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=250&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
 
 # Fetch the web page
 
