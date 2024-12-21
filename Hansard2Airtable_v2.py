@@ -121,31 +121,30 @@ def fetch_politicians():
 def process_members(members_string, politicians_map):
     """
     Convert pipe-separated member string into array of Airtable record IDs
-    for linked records
+    for linked records. Returns (member_ids, empty_reason) where empty_reason 
+    explains why the list is empty if it is.
     """
     global stats
     
     if not members_string or members_string.isspace():
         stats['empty_members'] += 1
-        stats['invalid_members'].add(members_string)  # Add the empty/invalid string
-        return []
+        stats['invalid_members'].add(members_string)
+        return [], "Empty or whitespace input string"
     
     # Split by pipe and strip whitespace
     members = [m.strip() for m in members_string.split('|')]
     members = [m for m in members if m and not m.isspace()]  # Remove empty or whitespace-only entries
     
-    if not members:  # If after cleaning we have no valid members
-        stats['empty_members'] += 1
-        return []
-    
     # Process each name and find matching record IDs
     member_ids = []
     unmatched_members = []
+    roles_found = []
     
     for member in members:
         # Skip certain roles that aren't actual members
         if member.upper() in ['ACTING SPEAKER', 'SPEAKER', 'PRESIDENT', 'DEPUTY SPEAKER']:
             stats['invalid_members'].add(member)
+            roles_found.append(member)
             continue
             
         # Normalize the name
@@ -167,14 +166,20 @@ def process_members(members_string, politicians_map):
         else:
             unmatched_members.append(member)
             stats['unmatched_members'].add(member)
-            print(f"Added to unmatched members: {member}")  # Debug output
+            print(f"Added to unmatched members: {member}")
+    
+    # If after all processing we have no valid members
+    if not member_ids:
+        stats['empty_members'] += 1
+        reason = f"All members filtered out (Roles={roles_found}, Unmatched={unmatched_members})"
+        return [], reason
             
     if unmatched_members:
         print(f"\nWarning: Could not find matching records for these members:")
         for member in unmatched_members:
             print(f"  - {member}")
             
-    return member_ids
+    return member_ids, None
 
 def fetch_existing_records():
     """
@@ -421,25 +426,31 @@ def clean_transcript_text(text):
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
     global stats
+    global skip_reasons  # Track skip reasons for analysis
     
     # Process proceedings into array
     proceedings = process_proceedings(row['Proceeding'])
     
-    # Skip if Proceeding or Members are empty
+    # Skip if Proceeding is empty
     if not proceedings:
         stats['empty_proceedings'] += 1
-        print(f"\nSkipping record from {row['Date']} - Empty Proceeding")
+        skip_reason = f"{row['Date']}|{row['Subject']}|EmptyProceedings"
+        skip_reasons.append(skip_reason)
+        print(f"\n[DEBUG] Skipping row: Date={row['Date']}, Subject={row['Subject']} => Reason=EmptyProceedings")
         return None
         
+    # Skip if Members is empty (already counted in process_members)
     if not member_ids:
-        print(f"\nSkipping record from {row['Date']} - Empty or Invalid Members")
-        return None  # Note: empty_members is now handled exclusively by process_members
+        print(f"\n[DEBUG] Skipping row: Date={row['Date']}, Subject={row['Subject']} => Reason=EmptyMembers")
+        return None
         
     # Format House field
     formatted_house = format_house(row['House'])
     if not formatted_house:
-        stats['invalid_house'] += 1  # Track invalid house values
-        print(f"\nSkipping record from {row['Date']} - Invalid House value: {row['House']}")
+        stats['invalid_house'] += 1
+        skip_reason = f"{row['Date']}|{row['Subject']}|InvalidHouse"
+        skip_reasons.append(skip_reason)
+        print(f"\n[DEBUG] Skipping row: Date={row['Date']}, Subject={row['Subject']} => Reason=InvalidHouse")
         return None
 
     new_fingerprint = (
@@ -470,14 +481,18 @@ def create_record(row, member_ids, transcript_fields, existing_records):
                 **transcript_fields
             }
         }
+        print(f"\n[DEBUG] Row accepted: Date={row['Date']}, Subject={row['Subject']} => Will be uploaded")
         return record
     else:
         stats['duplicates'] += 1
+        skip_reason = f"{row['Date']}|{row['Subject']}|Duplicate"
+        skip_reasons.append(skip_reason)
+        print(f"\n[DEBUG] Skipping row: Date={row['Date']}, Subject={row['Subject']} => Reason=Duplicate")
         return None
 
 # Configuration
-RECORDS_PER_PAGE = 10  # Number of records to display per page (max 1000)
-TOTAL_RECORDS_TO_SCRAPE = 40  # Total number of records to scrape
+RECORDS_PER_PAGE = 50  # Number of records to display per page (max 1000)
+TOTAL_RECORDS_TO_SCRAPE = 100  # Total number of records to scrape
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 def get_page_url(base_url, page_number, records_per_page):
@@ -511,6 +526,29 @@ current_page = 1
 records_scraped = 0
 hansard_df = pd.DataFrame()
 
+# Initialize statistics
+stats = {
+    'total_scraped': 0,
+    'empty_proceedings': 0,
+    'empty_members': 0,
+    'duplicates': 0,
+    'invalid_house': 0,    # New: Track invalid house values
+    'unmatched_members': set(),  # Using set to avoid duplicates
+    'invalid_members': set(),     # Track members that were invalid
+    'skipped_other': 0     # New: Track any other skipped records
+}
+
+# Initialize counters
+skipped_records = {'empty_fields': 0, 'duplicates': 0}
+
+# Initialize skip reasons tracking
+skip_reasons = []
+empty_members_reasons = []  # Track reasons for empty_members increments
+
+# Prepare new records to be added
+new_records = []
+split_transcripts = []
+
 while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
     print(f"\nProcessing page {current_page}...")
     print(f"Records scraped so far: {records_scraped}")
@@ -539,8 +577,7 @@ while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
             rows = table.find_all('tr')
             if len(rows) > 1 and 'Date' in rows[0].text:
                 target_table = table
-                print("Found target table with Hansard data")
-                break
+                break  # Stop after finding first valid table
 
         if not target_table:
             print("No suitable table found on the page. Breaking pagination loop.")
@@ -639,30 +676,43 @@ print("\nFetching required data...")
 politicians_map = fetch_politicians()
 existing_records = fetch_existing_records()
 
-# Initialize statistics
-stats = {
-    'total_scraped': 0,
-    'empty_proceedings': 0,
-    'empty_members': 0,
-    'duplicates': 0,
-    'invalid_house': 0,    # New: Track invalid house values
-    'unmatched_members': set(),  # Using set to avoid duplicates
-    'invalid_members': set(),     # Track members that were invalid
-    'skipped_other': 0     # New: Track any other skipped records
-}
-
-# Initialize counters
-skipped_records = {'empty_fields': 0, 'duplicates': 0}
-
 # Prepare new records to be added
 new_records = []
 split_transcripts = []
 
+# After scraping all records, check for duplicates
+print("\nChecking for duplicate rows...")
+from collections import Counter
+row_fingerprints = [(
+    row['Date'],
+    row['Subject'].strip(),  # Strip whitespace to catch near-duplicates
+    row['Members'].strip() if pd.notnull(row['Members']) else '',
+    row['House'].strip() if pd.notnull(row['House']) else '',
+    row['Page'].strip() if pd.notnull(row['Page']) else ''
+) for _, row in hansard_df.iterrows()]
+
+duplicate_counts = Counter(row_fingerprints)
+duplicates = [(k, v) for k, v in duplicate_counts.items() if v > 1]
+
+if duplicates:
+    print("\nFound duplicate rows in scraped data:")
+    for (date, subject, members, house, page), count in duplicates:
+        print(f"  - {date} | {subject} | {members} | {house} | {page} (appears {count} times)")
+
+# Deduplicate the DataFrame
+print("\nDeduplicating records...")
+before_dedup = len(hansard_df)
+hansard_df.drop_duplicates(subset=['Date', 'Subject', 'Page', 'Members', 'House'], keep='first', inplace=True)
+after_dedup = len(hansard_df)
+if before_dedup != after_dedup:
+    print(f"Removed {before_dedup - after_dedup} duplicate rows from DataFrame")
+
+# Process records
 for _, row in hansard_df.iterrows():
     stats['total_scraped'] += 1
     
     # Process members into record IDs first
-    member_ids = process_members(row['Members'], politicians_map)
+    member_ids, empty_reason = process_members(row['Members'], politicians_map)
     
     # Split transcript if necessary
     transcript_fields, was_split, was_truncated = split_transcript(row['Transcript'])
@@ -676,6 +726,12 @@ for _, row in hansard_df.iterrows():
         })
     
     # Create record with proper formatting
+    if empty_reason:
+        skip_reason = f"{row['Date']}|{row['Subject']}|{empty_reason}"
+        skip_reasons.append(skip_reason)
+        print(f"\n[DEBUG] Skipping row: Date={row['Date']}, Subject={row['Subject']} => Reason={empty_reason}")
+        continue
+        
     record = create_record(row, member_ids, transcript_fields, existing_records)
     if record:
         new_records.append(record)
@@ -736,6 +792,14 @@ if stats['unmatched_members']:
     print("\nUnmatched Members List:")
     for member in sorted(stats['unmatched_members']):
         print(f"  - {member}")
+
+print("\nSkip Reasons:")
+for reason in skip_reasons:
+    print(f"  - {reason}")
+
+print("\nEmpty Members Reasons:")
+for reason in empty_members_reasons:
+    print(f"  - {reason}")
 
 print("""
                  _ _.-'`-._ _
