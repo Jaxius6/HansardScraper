@@ -476,14 +476,19 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return None
 
 # Configuration
-ROWS_TO_PROCESS = 20  # Number of rows to scrape from Hansard
+RECORDS_PER_PAGE = 10  # Number of records to display per page (max 1000)
+TOTAL_RECORDS_TO_SCRAPE = 40  # Total number of records to scrape
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
-# URL of the Hansard webpage to scrape
-target_url = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=100&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
+def get_page_url(base_url, page_number, records_per_page):
+    """Construct URL with pagination parameters"""
+    # Replace the existing sResultsPage and sResultsPerPage parameters
+    url = base_url.replace('sResultsPage=1', f'sResultsPage={page_number}')
+    url = url.replace('sResultsPerPage=100', f'sResultsPerPage={records_per_page}')
+    return url
 
-# Fetch the web page
-
+# Base URL of the Hansard webpage to scrape
+BASE_URL = "https://www.parliament.wa.gov.au/hansard/hansard.nsf/NewAdvancedSearch?openform&Query=&Fields=((%5BHan_Date%5D%3E=01/01/2021))&sWord=&sWordsSearch=&sWordAll=&sWordExact=&sWordAtLeastOne=&sMember=&sCommit=&sComms=Current&sHouse=Both%20Houses&sProc=All%20Proceedings&sPage=&sSpeechesFrom=April%202021%20-%20Current&sDateCustom=&sHansardDbs=&sYear=All%20Years&sDate=&sStartDate=&sEndDate=&sParliament=41&sBill=&sWordVar=&sFuzzy=&sResultsPerPage=100&sResultsPage=1&sSortOrd=0&sAdv=1&sRun=true&sContinue=&sWarn="
 
 print("""
                  _ _.-'`-._ _
@@ -498,112 +503,136 @@ print("""
 ;;;;;;;;;  HANSARD  SCRAPER  ACTIVATED  ;;;;;;
 ----------------------------------------------
 
+
 """)
 
+# Initialize variables for pagination
+current_page = 1
+records_scraped = 0
+hansard_df = pd.DataFrame()
 
-print("Waiting for parliament.wa.gov.au...")
-response = requests.get(target_url)
-print("URL Success - Scraping Data...")
-soup = BeautifulSoup(response.content, 'html.parser')
+while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
+    print(f"\nProcessing page {current_page}...")
+    print(f"Records scraped so far: {records_scraped}")
+    
+    # Get URL for current page
+    url = get_page_url(BASE_URL, current_page, RECORDS_PER_PAGE)
+    
+    print("Waiting for parliament.wa.gov.au...")
+    response = requests.get(url)
+    print("URL Success - Scraping Data...")
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-# Lists to store scraped data
-dates, pages, subjects, proceedings, houses, members, pdf_links, transcripts, filesizes, is_truncated = [], [], [], [], [], [], [], [], [], []
+    # Lists to store scraped data for current page
+    dates, pages, subjects, proceedings, houses, members, pdf_links, transcripts, filesizes, is_truncated = [], [], [], [], [], [], [], [], [], []
 
-# Attempt to locate the table containing Hansard data
-tables = soup.find_all('table')
-print(f"Found {len(tables)} tables on the page")
+    # Attempt to locate the table containing Hansard data
+    tables = soup.find_all('table')
+    print(f"Found {len(tables)} tables on the page")
 
-if not tables:
-    print("No tables found on the page. Please check if the page structure has changed or if JavaScript is loading the content.")
-else:
-    target_table = None
-    for table in tables:
-        rows = table.find_all('tr')
-        if len(rows) > 1 and 'Date' in rows[0].text:
-            target_table = table
-            print("Found target table with Hansard data")
-            break
-
-    if not target_table:
-        print("No suitable table found on the page. Please check the HTML structure.")
+    if not tables:
+        print("No tables found on the page. Breaking pagination loop.")
+        break
     else:
-        rows = target_table.find_all('tr')
-        print(f"\nProcessing {ROWS_TO_PROCESS} rows from Hansard...")
-        
-        for idx, row in enumerate(rows[1:ROWS_TO_PROCESS + 1], 1):  # Process specified number of rows
-            print(f"\nProcessing row {idx} of {ROWS_TO_PROCESS}...")
-            cols = row.find_all('td')
-            if len(cols) >= 5:
-                date_page = cols[0].text.strip()
-                date, page = date_page.split(' / ') if ' / ' in date_page else (date_page, None)
-                try:
-                    date = datetime.strptime(date, "%d %b %Y").strftime("%Y-%m-%d")
-                except ValueError:
-                    print(f"Failed to parse date: {date}")
-                dates.append(date)
-                pages.append(page)
-                subject_text = cols[1].text.strip()
-                proceeding_match = re.search(r'\[(.*?)\]', subject_text)
-                if proceeding_match:
-                    proceedings.append(proceeding_match.group(1))
-                    subject_text = re.sub(r'\[.*?\]', '', subject_text).strip()
-                else:
-                    proceedings.append(None)
-                subjects.append(subject_text)
-                houses.append(cols[2].text.strip())
-                member_text = cols[3].text.strip()
-                print(f"\nDebug - Member text: '{member_text}'")  # Debug output
-                members.append(member_text)
-                pdf_link = cols[0].find('a', href=True) or cols[4].find('a', href=True)
-                if pdf_link:
-                    full_pdf_link = "https://www.parliament.wa.gov.au" + pdf_link['href']
-                    pdf_links.append(full_pdf_link)
-                else:
-                    pdf_links.append(None)
+        target_table = None
+        for table in tables:
+            rows = table.find_all('tr')
+            if len(rows) > 1 and 'Date' in rows[0].text:
+                target_table = table
+                print("Found target table with Hansard data")
+                break
 
-                if pdf_link:
+        if not target_table:
+            print("No suitable table found on the page. Breaking pagination loop.")
+            break
+        else:
+            rows = target_table.find_all('tr')
+            row_count = len(rows) - 1  # Subtract header row
+            
+            if row_count == 0:
+                print("No more records found. Breaking pagination loop.")
+                break
+
+            print(f"\nProcessing {row_count} rows from page {current_page}...")
+            
+            for idx, row in enumerate(rows[1:], 1):  # Process specified number of rows
+                print(f"\nProcessing row {idx} of {len(rows) - 1}...")
+                cols = row.find_all('td')
+
+                if len(cols) >= 5:
+                    date_page = cols[0].text.strip()
+                    date, page = date_page.split(' / ') if ' / ' in date_page else (date_page, None)
                     try:
-                        print(f"Downloading PDF from {full_pdf_link}")
-                        pdf_response = requests.get(full_pdf_link)
-                        filesize = round(len(pdf_response.content) / 1024, 2)  # Convert to KB and round to 2 decimal places
-                        filesizes.append(filesize)
-                        print(f"PDF size: {filesize} KB")
+                        date = datetime.strptime(date, "%d %b %Y").strftime("%Y-%m-%d")
+                    except ValueError:
+                        print(f"Failed to parse date: {date}")
+                    dates.append(date)
+                    pages.append(page)
+                    subject_text = cols[1].text.strip()
+                    proceeding_match = re.search(r'\[(.*?)\]', subject_text)
+                    if proceeding_match:
+                        proceedings.append(proceeding_match.group(1))
+                        subject_text = re.sub(r'\[.*?\]', '', subject_text).strip()
+                    else:
+                        proceedings.append(None)
+                    subjects.append(subject_text)
+                    houses.append(cols[2].text.strip())
+                    member_text = cols[3].text.strip()
+                    print(f"\nDebug - Member text: '{member_text}'")  # Debug output
+                    members.append(member_text)
+                    pdf_link = cols[0].find('a', href=True) or cols[4].find('a', href=True)
+                    if pdf_link:
+                        full_pdf_link = "https://www.parliament.wa.gov.au" + pdf_link['href']
+                        pdf_links.append(full_pdf_link)
+                    else:
+                        pdf_links.append(None)
+
+                    if pdf_link:
+                        try:
+                            print(f"Downloading PDF from {full_pdf_link}")
+                            pdf_response = requests.get(full_pdf_link)
+                            filesize = round(len(pdf_response.content) / 1024, 2)  # Convert to KB and round to 2 decimal places
+                            filesizes.append(filesize)
+                            print(f"PDF size: {filesize} KB")
                         
-                        pdf_content = io.BytesIO(pdf_response.content)
-                        pdf_reader = PdfReader(pdf_content)
-                        print(f"Successfully downloaded PDF with {len(pdf_reader.pages)} pages")
-                        transcript_text = ""
-                        for page_num, page in enumerate(pdf_reader.pages, 1):
-                            print(f"Extracting text from page {page_num}/{len(pdf_reader.pages)}")
-                            transcript_text += page.extract_text() + "\n"
-                        transcripts.append(transcript_text)
-                        is_truncated.append(len(transcript_text) > 95000)  # Track if this will need truncation
-                    except Exception as e:
-                        print(f"Failed to extract text from PDF: {e}")
+                            pdf_content = io.BytesIO(pdf_response.content)
+                            pdf_reader = PdfReader(pdf_content)
+                            print(f"Successfully downloaded PDF with {len(pdf_reader.pages)} pages")
+                            transcript_text = ""
+                            for page_num, page in enumerate(pdf_reader.pages, 1):
+                                print(f"Extracting text from page {page_num}/{len(pdf_reader.pages)}")
+                                transcript_text += page.extract_text() + "\n"
+                            transcripts.append(transcript_text)
+                            is_truncated.append(len(transcript_text) > 95000)  # Track if this will need truncation
+                        except Exception as e:
+                            print(f"Failed to extract text from PDF: {e}")
+                            transcripts.append(None)
+                            filesizes.append(None)
+                            is_truncated.append(False)
+                    else:
+                        print("No PDF link found for this row")
                         transcripts.append(None)
                         filesizes.append(None)
                         is_truncated.append(False)
-                else:
-                    print("No PDF link found for this row")
-                    transcripts.append(None)
-                    filesizes.append(None)
-                    is_truncated.append(False)
 
-# Create a DataFrame with the scraped data
-hansard_df = pd.DataFrame({
-    'Date': dates,
-    'Page': pages,
-    'Subject': subjects,
-    'Proceeding': proceedings,
-    'House': houses,
-    'Members': members,
-    'PDF': pdf_links,
-    'Transcript': transcripts,
-    'Filesize': filesizes,
-    'Truncated': is_truncated
-})
+            # Create a DataFrame with the scraped data
+            new_df = pd.DataFrame({
+                'Date': dates,
+                'Page': pages,
+                'Subject': subjects,
+                'Proceeding': proceedings,
+                'House': houses,
+                'Members': members,
+                'PDF': pdf_links,
+                'Transcript': transcripts,
+                'Filesize': filesizes,
+                'Truncated': is_truncated
+            })
 
-print("Parsing Data...")
+            hansard_df = pd.concat([hansard_df, new_df])
+
+            records_scraped += len(rows) - 1
+            current_page += 1
 
 # Fetch data at startup
 print("\nFetching required data...")
