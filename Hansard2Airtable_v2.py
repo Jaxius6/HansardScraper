@@ -478,6 +478,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
                 'PDF_URL': row['PDF'] if row['PDF'] else None,
                 'Word_Count': word_count,
                 'Filesize': filesize,
+                'Video_URL': f"https://www.parliament.wa.gov.au/hansard/hansard.nsf/DailyTranscripts?OpenView&gotodate={row['Date'].replace('/', '')}",
                 **transcript_fields
             }
         }
@@ -491,8 +492,8 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         return None
 
 # Configuration
-RECORDS_PER_PAGE = 50  # Number of records to display per page (max 1000)
-TOTAL_RECORDS_TO_SCRAPE = 100  # Total number of records to scrape
+RECORDS_PER_PAGE = 10  # Number of records to display per page (max 1000)
+TOTAL_RECORDS_TO_SCRAPE = 10  # Total number of records to scrape
 BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 def get_page_url(base_url, page_number, records_per_page):
