@@ -8,6 +8,7 @@ from datetime import datetime
 import json
 import time
 from difflib import get_close_matches
+import uuid
 
 # Airtable setup
 PAT = 'pat3gAuWKEFFiCZCJ.c19be85e0684f36aaeb153447f2bf233942f49f64efc8edb3d0e90834c717614'
@@ -187,55 +188,46 @@ def fetch_existing_records():
     fingerprint for each record to prevent duplications.
     """
     print("\nFetching existing records from Airtable...")
-    existing_records = set()
-    offset = None
-    records_count = 0
+    print("Making API request to Airtable...")
     
     try:
-        print("Making API request to Airtable...")
         response = requests.get(AIRTABLE_URL, headers=HEADERS)
-        response.raise_for_status()
+        response.raise_for_status()  # Raises an HTTPError for bad responses
         
-        data = response.json()
-        records = data.get('records', [])
-        print(f"Retrieved {len(records)} records (Total: {len(records)})")
+        records = response.json().get('records', [])
+        print(f"Found {len(records)} existing records")
         
+        # Create fingerprints for existing records
+        existing = {}
         for record in records:
             fields = record.get('fields', {})
-            # Convert members list to tuple for hashing
-            members = tuple(fields.get('Members', [])) if isinstance(fields.get('Members'), list) else tuple([fields.get('Members')] if fields.get('Members') else [])
+            fingerprint = create_record_fingerprint(fields)
+            existing[fingerprint] = record['id']
             
-            fingerprint = (
-                fields.get('Date'),
-                fields.get('Subject'),
-                fields.get('Page'),
-                fields.get('House'),
-                members,  # Now using the tuple version
-                tuple(fields.get('Proceeding', []))  # Use tuple for proceedings
-            )
-            existing_records.add(fingerprint)
-            
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching existing records: {response.status_code} - {response.text}")
-        return set()
+        return existing
         
-    return existing_records
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection Error: Unable to reach Airtable API. Please check your internet connection.")
+        print(f"Error details: {str(e)}")
+        return {}
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching existing records: {str(e)}")
+        return {}
 
 def upload_records_to_airtable(records):
     """Upload records to Airtable in batches"""
     if not records:
-        print("No new records to upload.")
+        print("No records to upload")
         return
     
-    BATCH_SIZE = 10  # Number of records to send to Airtable at once
     successful_uploads = 0
     failed_uploads = 0
     
     # Split records into batches
-    total_batches = (len(records) + BATCH_SIZE - 1) // BATCH_SIZE
+    total_batches = (len(records) + 10 - 1) // 10
     
-    for batch_num, i in enumerate(range(0, len(records), BATCH_SIZE), 1):
-        batch = records[i:i + BATCH_SIZE]
+    for batch_num, i in enumerate(range(0, len(records), 10), 1):
+        batch = records[i:i + 10]
         print(f"\n--- Processing Batch {batch_num}/{total_batches} ---")
         
         # Prepare the request
@@ -428,6 +420,9 @@ def create_record(row, member_ids, transcript_fields, existing_records):
     global stats
     global skip_reasons  # Track skip reasons for analysis
     
+    # Generate a unique ID for this record
+    hansard_id = f"HAN_{str(uuid.uuid4())}"
+    
     # Process proceedings into array
     proceedings = process_proceedings(row['Proceeding'])
     
@@ -468,6 +463,7 @@ def create_record(row, member_ids, transcript_fields, existing_records):
         
         record = {
             'fields': {
+                'Hansard_ID': hansard_id,
                 'Date': row['Date'],
                 'Page': row['Page'],
                 'Subject': format_subject(row['Subject']),
@@ -494,7 +490,6 @@ def create_record(row, member_ids, transcript_fields, existing_records):
 # Configuration
 RECORDS_PER_PAGE = 10  # Number of records to display per page (max 1000)
 TOTAL_RECORDS_TO_SCRAPE = 10  # Total number of records to scrape
-BATCH_SIZE = 10  # Number of records to send to Airtable at once
 
 def get_page_url(base_url, page_number, records_per_page):
     """Construct URL with pagination parameters"""
