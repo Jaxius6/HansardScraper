@@ -9,10 +9,11 @@ import json
 import time
 from difflib import get_close_matches
 import uuid
+import os
 
 # Airtable setup
-PAT = 'pat3gAuWKEFFiCZCJ.c19be85e0684f36aaeb153447f2bf233942f49f64efc8edb3d0e90834c717614'
-BASE_ID = 'appdeZcAttBaG5oVI'
+PAT = os.getenv('AIRTABLE_PAT', 'pat3gAuWKEFFiCZCJ.c19be85e0684f36aaeb153447f2bf233942f49f64efc8edb3d0e90834c717614')
+BASE_ID = os.getenv('AIRTABLE_BASE_ID', 'appdeZcAttBaG5oVI')
 TABLE_NAME = 'Hansard'
 POLITICIANS_TABLE = 'Politicians'  # Add Politicians table name
 AIRTABLE_URL = f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}'
