@@ -15,6 +15,24 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Airtable setup
+PAT = os.getenv('AIRTABLE_PAT')
+BASE_ID = os.getenv('AIRTABLE_BASE_ID')
+
+if not PAT or not BASE_ID:
+    print("Error: AIRTABLE_PAT and AIRTABLE_BASE_ID environment variables must be set")
+    print("Please check your .env file or GitHub Secrets")
+    exit(1)
+
+TABLE_NAME = 'Hansard'
+POLITICIANS_TABLE = 'Politicians'  # Add Politicians table name
+AIRTABLE_URL = f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}'
+POLITICIANS_URL = f'https://api.airtable.com/v0/{BASE_ID}/{POLITICIANS_TABLE}'
+HEADERS = {
+    "Authorization": f"Bearer {PAT}",
+    "Content-Type": "application/json"
+}
+
 def fetch_url_with_retry(url, max_retries=2, delay_seconds=5, headers=None):
     """
     Fetch a URL with retry logic
@@ -58,18 +76,6 @@ def check_airtable_connection():
         print(f"Failed to connect to Airtable: {str(e)}")
         print("Cannot proceed without Airtable connection. Exiting...")
         return False
-
-# Airtable setup
-PAT = os.getenv('AIRTABLE_PAT', 'pat3gAuWKEFFiCZCJ.c19be85e0684f36aaeb153447f2bf233942f49f64efc8edb3d0e90834c717614')
-BASE_ID = os.getenv('AIRTABLE_BASE_ID', 'appdeZcAttBaG5oVI')
-TABLE_NAME = 'Hansard'
-POLITICIANS_TABLE = 'Politicians'  # Add Politicians table name
-AIRTABLE_URL = f'https://api.airtable.com/v0/{BASE_ID}/{TABLE_NAME}'
-POLITICIANS_URL = f'https://api.airtable.com/v0/{BASE_ID}/{POLITICIANS_TABLE}'
-HEADERS = {
-    "Authorization": f"Bearer {PAT}",
-    "Content-Type": "application/json"
-}
 
 def normalize_name(name):
     """Normalize a name for better matching"""
