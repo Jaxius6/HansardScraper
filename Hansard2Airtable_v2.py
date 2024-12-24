@@ -10,6 +10,54 @@ import time
 from difflib import get_close_matches
 import uuid
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+def fetch_url_with_retry(url, max_retries=2, delay_seconds=5, headers=None):
+    """
+    Fetch a URL with retry logic
+    
+    Args:
+        url (str): URL to fetch
+        max_retries (int): Maximum number of retry attempts
+        delay_seconds (int): Delay between retries in seconds
+        headers (dict): Optional headers for the request
+    
+    Returns:
+        requests.Response or None: Response object if successful, None if all retries fail
+    """
+    for attempt in range(max_retries):
+        try:
+            print(f"Attempt {attempt + 1}/{max_retries} - Fetching URL...")
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()  # Raise an exception for bad status codes
+            return response
+        except requests.exceptions.RequestException as e:
+            if attempt < max_retries - 1:
+                print(f"Attempt {attempt + 1} failed. Error: {str(e)}")
+                print(f"Waiting {delay_seconds} seconds before retrying...")
+                time.sleep(delay_seconds)
+            else:
+                print(f"All {max_retries} attempts failed. Last error: {str(e)}")
+                raise  # Re-raise the last exception if all retries fail
+
+def check_airtable_connection():
+    """
+    Check if we can connect to Airtable before proceeding
+    Returns:
+        bool: True if connection is successful, False otherwise
+    """
+    try:
+        print("Testing Airtable connection...")
+        response = fetch_url_with_retry(AIRTABLE_URL, headers=HEADERS)
+        print("Successfully connected to Airtable!")
+        return True
+    except requests.exceptions.RequestException as e:
+        print(f"Failed to connect to Airtable: {str(e)}")
+        print("Cannot proceed without Airtable connection. Exiting...")
+        return False
 
 # Airtable setup
 PAT = os.getenv('AIRTABLE_PAT', 'pat3gAuWKEFFiCZCJ.c19be85e0684f36aaeb153447f2bf233942f49f64efc8edb3d0e90834c717614')
@@ -102,9 +150,7 @@ def fetch_politicians():
     politicians_map = {}
     
     try:
-        response = requests.get(POLITICIANS_URL, headers=HEADERS)
-        response.raise_for_status()
-        
+        response = fetch_url_with_retry(POLITICIANS_URL, headers=HEADERS)
         data = response.json()
         records = data.get('records', [])
         print(f"Retrieved {len(records)} politicians")
@@ -192,7 +238,7 @@ def fetch_existing_records():
     print("Making API request to Airtable...")
     
     try:
-        response = requests.get(AIRTABLE_URL, headers=HEADERS)
+        response = fetch_url_with_retry(AIRTABLE_URL, headers=HEADERS)
         response.raise_for_status()  # Raises an HTTPError for bad responses
         
         records = response.json().get('records', [])
@@ -416,6 +462,17 @@ def clean_transcript_text(text):
     
     return text
 
+def create_record_fingerprint(fields):
+    """Create a fingerprint for a record to prevent duplications"""
+    return (
+        fields.get('Date'),
+        fields.get('Subject'),
+        fields.get('Page'),
+        fields.get('House'),
+        tuple(fields.get('Members', [])),
+        tuple(fields.get('Proceeding', []))
+    )
+
 def create_record(row, member_ids, transcript_fields, existing_records):
     """Create a new record with proper formatting"""
     global stats
@@ -518,6 +575,10 @@ print("""
 
 """)
 
+# Check Airtable connection before proceeding
+if not check_airtable_connection():
+    exit()
+
 # Initialize variables for pagination
 current_page = 1
 records_scraped = 0
@@ -546,6 +607,11 @@ empty_members_reasons = []  # Track reasons for empty_members increments
 new_records = []
 split_transcripts = []
 
+# Fetch data at startup
+print("\nFetching required data...")
+politicians_map = fetch_politicians()
+existing_records = fetch_existing_records()
+
 while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
     print(f"\nProcessing page {current_page}...")
     print(f"Records scraped so far: {records_scraped}")
@@ -554,7 +620,7 @@ while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
     url = get_page_url(BASE_URL, current_page, RECORDS_PER_PAGE)
     
     print("Waiting for parliament.wa.gov.au...")
-    response = requests.get(url)
+    response = fetch_url_with_retry(url)
     print("URL Success - Scraping Data...")
     soup = BeautifulSoup(response.content, 'html.parser')
 
@@ -624,7 +690,7 @@ while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
                     if pdf_link:
                         try:
                             print(f"Downloading PDF from {full_pdf_link}")
-                            pdf_response = requests.get(full_pdf_link)
+                            pdf_response = fetch_url_with_retry(full_pdf_link)
                             filesize = round(len(pdf_response.content) / 1024, 2)  # Convert to KB and round to 2 decimal places
                             filesizes.append(filesize)
                             print(f"PDF size: {filesize} KB")
@@ -667,15 +733,6 @@ while records_scraped < TOTAL_RECORDS_TO_SCRAPE:
 
             records_scraped += len(rows) - 1
             current_page += 1
-
-# Fetch data at startup
-print("\nFetching required data...")
-politicians_map = fetch_politicians()
-existing_records = fetch_existing_records()
-
-# Prepare new records to be added
-new_records = []
-split_transcripts = []
 
 # After scraping all records, check for duplicates
 print("\nChecking for duplicate rows...")
